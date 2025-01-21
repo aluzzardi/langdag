@@ -19,8 +19,8 @@ func main() {
 	}
 
 	fmt.Fprintf(os.Stderr, "==> Loading tools\n")
-	// tools, err := tool.Load(ctx, dag, "github.com/aluzzardi/daggerverse/trufflehog")
-	tools, err := tool.Load(ctx, dag, "../../modules/trufflehog")
+	tools, err := tool.Load(ctx, dag, "github.com/aluzzardi/langdag/modules/trufflehog")
+	// tools, err := tool.Load(ctx, dag, "../../modules/trufflehog")
 	if err != nil {
 		panic(err)
 	}
