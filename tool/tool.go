@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"dagger.io/dagger"
 	"dagger.io/dagger/querybuilder"
@@ -12,7 +13,7 @@ import (
 	"github.com/openai/openai-go"
 )
 
-func Load(ctx context.Context, dag *dagger.Client, ref string) (Tools, error) {
+func Load(ctx context.Context, dag *dagger.Client, ref string, args map[string]any) (Tools, error) {
 	mod, err := initializeModule(ctx, dag, ref, false)
 	if err != nil {
 		return nil, fmt.Errorf("unable to load %s: %w", ref, err)
@@ -25,28 +26,33 @@ func Load(ctx context.Context, dag *dagger.Client, ref string) (Tools, error) {
 	tools := make(Tools, 0, len(fns))
 
 	for _, fn := range fns {
-		tools = append(tools, NewTool(dag, mod, fn))
+		tools = append(tools, NewTool(dag, mod, fn, args))
 	}
 
 	return tools, nil
 }
 
 type Tool struct {
-	dag *dagger.Client
-	mod *moduleDef
-	fn  *modFunction
+	dag  *dagger.Client
+	mod  *moduleDef
+	fn   *modFunction
+	args map[string]any
 }
 
-func NewTool(dag *dagger.Client, mod *moduleDef, fn *modFunction) *Tool {
+func NewTool(dag *dagger.Client, mod *moduleDef, fn *modFunction, args map[string]any) *Tool {
+	if args == nil {
+		args = make(map[string]any)
+	}
 	return &Tool{
-		dag: dag,
-		mod: mod,
-		fn:  fn,
+		dag:  dag,
+		mod:  mod,
+		fn:   fn,
+		args: args,
 	}
 }
 
 func (t *Tool) Name() string {
-	return t.mod.Name + "__" + t.fn.CmdName()
+	return t.mod.Name + "_" + t.fn.CmdName()
 }
 
 func (t *Tool) Description() string {
@@ -57,10 +63,40 @@ func (t *Tool) Params() openai.ChatCompletionToolParam {
 	properties := map[string]any{}
 	required := []string{}
 	for _, arg := range t.fn.Args {
-		properties[arg.Name] = map[string]string{
+		props := map[string]any{
 			"type":        arg.TypeDef.String(),
 			"description": arg.Description,
 		}
+		switch arg.TypeDef.Kind {
+		case dagger.TypeDefKindStringKind:
+			props["type"] = "string"
+		case dagger.TypeDefKindIntegerKind:
+			props["type"] = "integer"
+		case dagger.TypeDefKindBooleanKind:
+			props["type"] = "boolean"
+		case dagger.TypeDefKindVoidKind:
+			props["type"] = "null"
+		// case dagger.TypeDefKindScalarKind:
+		// 	return t.AsScalar.Name
+		// case dagger.TypeDefKindEnumKind:
+		// 	return t.AsEnum.Name
+		// case dagger.TypeDefKindInputKind:
+		// 	return t.AsInput.Name
+		// case dagger.TypeDefKindObjectKind:
+		// 	return t.AsObject.Name
+		// case dagger.TypeDefKindInterfaceKind:
+		// 	return t.AsInterface.Name
+		case dagger.TypeDefKindListKind:
+			props["type"] = "array"
+			props["items"] = map[string]string{
+				"type": arg.TypeDef.AsList.ElementTypeDef.String(),
+			}
+		default:
+			panic(fmt.Sprintf("unsupported type: %s", arg.TypeDef.Kind))
+		}
+
+		properties[arg.Name] = props
+
 		if !arg.TypeDef.Optional {
 			required = append(required, arg.Name)
 		}
@@ -70,24 +106,63 @@ func (t *Tool) Params() openai.ChatCompletionToolParam {
 		Function: openai.F(openai.FunctionDefinitionParam{
 			Name:        openai.String(t.Name()),
 			Description: openai.String(t.Description()),
-			Strict:      openai.Bool(true),
+			// Strict:      openai.Bool(true),
 			Parameters: openai.F(openai.FunctionParameters{
-				"type":                 "object",
-				"properties":           properties,
-				"required":             required,
-				"additionalProperties": false,
+				"type":       "object",
+				"properties": properties,
+				"required":   required,
+				// "additionalProperties": false,
 			}),
 		}),
 	}
 }
 
+func (t *Tool) InitFromEnv() error {
+	ctor := t.mod.MainObject.AsObject.Constructor
+
+	for _, arg := range ctor.Args {
+		k := strings.ToUpper(t.mod.Name) + "_" + strings.ToUpper(arg.Name)
+		fmt.Fprintf(os.Stderr, "Loading option %s::%s from %s\n", t.mod.Name, arg.Name, k)
+		v := os.Getenv(k)
+		if v == "" {
+			return fmt.Errorf("%q not set", k)
+		}
+
+		switch arg.TypeDef.Kind {
+		case dagger.TypeDefKindStringKind:
+			t.args[arg.Name] = v
+		case dagger.TypeDefKindObjectKind:
+			if arg.TypeDef.AsObject.Name != "Secret" {
+				return fmt.Errorf("unsupported type: %s", arg.TypeDef.AsObject.Name)
+			}
+
+			t.args[arg.Name] = t.dag.SetSecret(k, v)
+		// case dagger.TypeDefKindIntegerKind:
+		// case dagger.TypeDefKindBooleanKind:
+		// case dagger.TypeDefKindVoidKind:
+		// case dagger.TypeDefKindListKind:
+		default:
+			panic(fmt.Sprintf("unsupported type: %s", arg.TypeDef.Kind))
+		}
+	}
+
+	return nil
+}
+
 func (t *Tool) Call(ctx context.Context, arguments string) (string, error) {
 	q := querybuilder.Query().Client(t.dag.GraphQLClient())
 
-	q = q.Select(t.mod.Name).Select(t.fn.Name)
+	// Select module
+	q = q.Select(t.mod.Name)
+	// Bind top-level args
+	for k, v := range t.args {
+		q = q.Arg(k, v)
+	}
 
+	// Select function
+	q = q.Select(t.fn.Name)
 	// Extract the location from the function call arguments
-	var args map[string]interface{}
+	var args map[string]any
 	if err := json.Unmarshal([]byte(arguments), &args); err != nil {
 		panic(err)
 	}
@@ -147,4 +222,13 @@ func (t Tools) Dispatch(ctx context.Context, name, arguments string) (string, er
 		return "", fmt.Errorf("tool not found: %s", name)
 	}
 	return tool.Call(ctx, arguments)
+}
+
+func (t Tools) InitFromEnv() error {
+	for _, tool := range t {
+		if err := tool.InitFromEnv(); err != nil {
+			return err
+		}
+	}
+	return nil
 }
