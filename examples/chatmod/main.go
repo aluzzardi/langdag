@@ -68,9 +68,8 @@ func chat(ctx context.Context, mod string) error {
 
 		params.Messages.Value = append(params.Messages.Value, completion.Choices[0].Message)
 
-		toolCalls := completion.Choices[0].Message.ToolCalls
-
-		if len(toolCalls) > 0 {
+		for len(completion.Choices[0].Message.ToolCalls) > 0 {
+			toolCalls := completion.Choices[0].Message.ToolCalls
 			for _, toolCall := range toolCalls {
 				fmt.Fprintf(os.Stderr, "=> invoking tool: %s(%s)\n", toolCall.Function.Name, toolCall.Function.Arguments)
 				response, err := tools.Dispatch(ctx, toolCall.Function.Name, toolCall.Function.Arguments)
@@ -84,6 +83,7 @@ func chat(ctx context.Context, mod string) error {
 			if err != nil {
 				return err
 			}
+			params.Messages.Value = append(params.Messages.Value, completion.Choices[0].Message)
 		}
 
 		fmt.Printf("%s\n", completion.Choices[0].Message.Content)
