@@ -70,10 +70,12 @@ func (t *Tool) Params() openai.ChatCompletionToolParam {
 		Function: openai.F(openai.FunctionDefinitionParam{
 			Name:        openai.String(t.Name()),
 			Description: openai.String(t.Description()),
+			Strict:      openai.Bool(true),
 			Parameters: openai.F(openai.FunctionParameters{
-				"type":       "object",
-				"properties": properties,
-				"required":   required,
+				"type":                 "object",
+				"properties":           properties,
+				"required":             required,
+				"additionalProperties": false,
 			}),
 		}),
 	}
