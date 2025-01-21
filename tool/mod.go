@@ -26,28 +26,32 @@ const (
 	moduleURLDefault = "."
 )
 
-func loadModule(ctx context.Context, dag *dagger.Client, mod string) (*moduleDef, error) {
-	conf := &configuredModule{}
+// initializeModule loads the module at the given source ref
+//
+// Returns an error if the module is not found or invalid.
+func initializeModule(
+	ctx context.Context,
+	dag *dagger.Client,
+	srcRef string,
+	doFindUp bool,
+	srcOpts ...dagger.ModuleSourceOpts,
+) (rdef *moduleDef, rerr error) {
+	conf, err := getModuleConfigurationForSourceRef(ctx, dag, srcRef, doFindUp, true, srcOpts...)
 
-	conf.Source = dag.ModuleSource(mod)
-	var err error
-	conf.SourceKind, err = conf.Source.Kind(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get module ref kind: %w", err)
+		return nil, fmt.Errorf("failed to get configured module: %w", err)
+	}
+	if !conf.FullyInitialized() {
+		return nil, fmt.Errorf("module must be fully initialized")
 	}
 
-	if conf.SourceKind != dagger.ModuleSourceKindGitSource {
-		return nil, fmt.Errorf("unsupported source kind %s", conf.SourceKind)
-	}
+	return initializeModuleConfig(ctx, dag, conf)
+}
 
-	conf.ModuleSourceConfigExists, err = conf.Source.ConfigExists(ctx)
+func initializeModuleConfig(ctx context.Context, dag *dagger.Client, conf *configuredModule) (rdef *moduleDef, rerr error) {
+	err := conf.Source.AsModule().Initialize().Serve(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to check if module config exists: %w", err)
-	}
-
-	err = conf.Source.AsModule().Initialize().Serve(ctx)
-	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to serve module: %w", err)
 	}
 
 	def, err := inspectModule(ctx, dag, conf.Source)
@@ -55,12 +59,7 @@ func loadModule(ctx context.Context, dag *dagger.Client, mod string) (*moduleDef
 		return nil, err
 	}
 
-	err = def.loadTypeDefs(ctx, dag)
-	if err != nil {
-		return nil, err
-	}
-
-	return def, nil
+	return def, def.loadTypeDefs(ctx, dag)
 }
 
 func inspectModule(ctx context.Context, dag *dagger.Client, source *dagger.ModuleSource) (rdef *moduleDef, rerr error) {

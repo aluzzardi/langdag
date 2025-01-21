@@ -13,7 +13,7 @@ import (
 )
 
 func Load(ctx context.Context, dag *dagger.Client, ref string) (Tools, error) {
-	mod, err := loadModule(ctx, dag, ref)
+	mod, err := initializeModule(ctx, dag, ref, false)
 	if err != nil {
 		return nil, fmt.Errorf("unable to load %s: %w", ref, err)
 	}
