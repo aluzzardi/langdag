@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 
@@ -59,22 +58,11 @@ func run(ctx context.Context) error {
 	params.Messages.Value = append(params.Messages.Value, completion.Choices[0].Message)
 	for _, toolCall := range toolCalls {
 		fmt.Fprintf(os.Stderr, "invoking tool: %s(%s)\n", toolCall.Function.Name, toolCall.Function.Arguments)
-		t := tools.Get(toolCall.Function.Name)
-		if t == nil {
-			return fmt.Errorf("tool not found: %s", toolCall.Function.Name)
-		}
-		// Extract the location from the function call arguments
-		var args map[string]interface{}
-		if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &args); err != nil {
-			panic(err)
-		}
-
-		resp, err := t.Call(ctx, dag, args)
+		response, err := tools.Dispatch(ctx, toolCall.Function.Name, toolCall.Function.Arguments)
 		if err != nil {
 			return err
 		}
-
-		params.Messages.Value = append(params.Messages.Value, openai.ToolMessage(toolCall.ID, resp))
+		params.Messages.Value = append(params.Messages.Value, openai.ToolMessage(toolCall.ID, response))
 	}
 
 	completion, err = client.Chat.Completions.New(ctx, params)

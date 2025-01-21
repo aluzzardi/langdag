@@ -45,8 +45,6 @@ func loadModule(ctx context.Context, dag *dagger.Client, mod string) (*moduleDef
 		return nil, fmt.Errorf("failed to check if module config exists: %w", err)
 	}
 
-	fmt.Printf("config exists: %v\n", conf.ModuleSourceConfigExists)
-
 	err = conf.Source.AsModule().Initialize().Serve(ctx)
 	if err != nil {
 		return nil, err

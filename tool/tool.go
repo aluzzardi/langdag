@@ -15,7 +15,7 @@ import (
 func Load(ctx context.Context, dag *dagger.Client, ref string) (Tools, error) {
 	mod, err := loadModule(ctx, dag, ref)
 	if err != nil {
-		return nil, fmt.Errorf("unable to load %s: %w", err)
+		return nil, fmt.Errorf("unable to load %s: %w", ref, err)
 	}
 
 	var o functionProvider = mod.MainObject.AsFunctionProvider()
@@ -25,19 +25,21 @@ func Load(ctx context.Context, dag *dagger.Client, ref string) (Tools, error) {
 	tools := make(Tools, 0, len(fns))
 
 	for _, fn := range fns {
-		tools = append(tools, NewTool(mod, fn))
+		tools = append(tools, NewTool(dag, mod, fn))
 	}
 
 	return tools, nil
 }
 
 type Tool struct {
+	dag *dagger.Client
 	mod *moduleDef
 	fn  *modFunction
 }
 
-func NewTool(mod *moduleDef, fn *modFunction) *Tool {
+func NewTool(dag *dagger.Client, mod *moduleDef, fn *modFunction) *Tool {
 	return &Tool{
+		dag: dag,
 		mod: mod,
 		fn:  fn,
 	}
@@ -77,11 +79,16 @@ func (t *Tool) Params() openai.ChatCompletionToolParam {
 	}
 }
 
-func (t *Tool) Call(ctx context.Context, dag *dagger.Client, args map[string]interface{}) (string, error) {
-	q := querybuilder.Query().Client(dag.GraphQLClient())
+func (t *Tool) Call(ctx context.Context, arguments string) (string, error) {
+	q := querybuilder.Query().Client(t.dag.GraphQLClient())
 
 	q = q.Select(t.mod.Name).Select(t.fn.Name)
 
+	// Extract the location from the function call arguments
+	var args map[string]interface{}
+	if err := json.Unmarshal([]byte(arguments), &args); err != nil {
+		panic(err)
+	}
 	for arg, v := range args {
 		q = q.Arg(arg, v)
 	}
@@ -95,7 +102,7 @@ func (t *Tool) Call(ctx context.Context, dag *dagger.Client, args map[string]int
 
 	var response graphql.Response
 
-	err = dag.GraphQLClient().MakeRequest(ctx,
+	err = t.dag.GraphQLClient().MakeRequest(ctx,
 		&graphql.Request{
 			Query: gql,
 		},
@@ -104,8 +111,6 @@ func (t *Tool) Call(ctx context.Context, dag *dagger.Client, args map[string]int
 	if err != nil {
 		return "", err
 	}
-
-	fmt.Fprintf(os.Stderr, "RESPONSE: %+v\n", response)
 
 	data, err := json.Marshal(response.Data)
 	if err != nil {
@@ -132,4 +137,12 @@ func (t Tools) Get(name string) *Tool {
 		}
 	}
 	return nil
+}
+
+func (t Tools) Dispatch(ctx context.Context, name, arguments string) (string, error) {
+	tool := t.Get(name)
+	if tool == nil {
+		return "", fmt.Errorf("tool not found: %s", name)
+	}
+	return tool.Call(ctx, arguments)
 }
