@@ -111,3 +111,24 @@ func (m *Github) IssueList(
 
 	return m.base().WithExec(args).Stdout(ctx)
 }
+
+// Add a comment to a GitHub issue.
+func (m *Github) IssueComment(
+	ctx context.Context,
+	// Select another repository using the [HOST/]OWNER/REPO format
+	repo string,
+	// The issue number or URL
+	issue string,
+
+	// The comment body text
+	body string,
+) (string, error) {
+	args := []string{
+		"gh", "issue", "comment",
+		"-R", repo,
+		issue,
+		"--body", body,
+	}
+
+	return m.base().WithExec(args).Stdout(ctx)
+}
