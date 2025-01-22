@@ -17,10 +17,10 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+	defer dag.Close()
 
 	fmt.Fprintf(os.Stderr, "==> Loading tools\n")
 	tools, err := tool.Load(ctx, dag, "github.com/aluzzardi/langdag/modules/trufflehog", nil)
-	// tools, err := tool.Load(ctx, dag, "../../modules/trufflehog", nil)
 	if err != nil {
 		panic(err)
 	}
