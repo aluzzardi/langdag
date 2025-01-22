@@ -13,24 +13,23 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintf(os.Stderr, "usage: %s <module>\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "usage: %s <modules...>\n", os.Args[0])
 		os.Exit(1)
 	}
-	mod := os.Args[1]
-	if err := chat(context.Background(), mod); err != nil {
+	if err := chat(context.Background(), os.Args[1:]); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-func chat(ctx context.Context, mod string) error {
-	dag, err := dagger.Connect(ctx) //, dagger.WithLogOutput(os.Stderr))
+func chat(ctx context.Context, mods []string) error {
+	dag, err := dagger.Connect(ctx, dagger.WithLogOutput(os.Stderr))
 	if err != nil {
 		return err
 	}
 	defer dag.Close()
 
-	tools, err := tool.Load(ctx, dag, mod, nil)
+	tools, err := tool.LoadAll(ctx, dag, mods)
 	if err != nil {
 		return err
 	}
@@ -52,10 +51,14 @@ func chat(ctx context.Context, mod string) error {
 		question := prompt.Input("> ", func(in prompt.Document) []prompt.Suggest {
 			return []prompt.Suggest{}
 		}, prompt.OptionHistory(history))
-		history = append(history, question)
+		if question == "" {
+			continue
+		}
 		if question == "exit" {
 			break
 		}
+
+		history = append(history, question)
 		fmt.Fprintf(os.Stderr, "\n")
 
 		params.Messages.Value = append(params.Messages.Value, openai.UserMessage(question))

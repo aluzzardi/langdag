@@ -32,6 +32,19 @@ func Load(ctx context.Context, dag *dagger.Client, ref string, args map[string]a
 	return tools, nil
 }
 
+func LoadAll(ctx context.Context, dag *dagger.Client, refs []string) (Tools, error) {
+	tools := Tools{}
+	for _, ref := range refs {
+		t, err := Load(ctx, dag, ref, nil)
+		if err != nil {
+			return nil, err
+		}
+		tools = append(tools, t...)
+	}
+
+	return tools, nil
+}
+
 type Tool struct {
 	dag  *dagger.Client
 	mod  *moduleDef
