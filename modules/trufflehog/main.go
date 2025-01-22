@@ -20,6 +20,21 @@ func (m *Trufflehog) Git(
 	ctx context.Context,
 	// Git repository URL. https:// or ssh:// schema expected
 	uri string,
+
+	// Commit (or branch) to start scan from
+	// +optional
+	sinceCommit string,
+
+	// Branch to scan
+	// +optional
+	branch string,
 ) (string, error) {
-	return m.base().WithExec([]string{"trufflehog", "--json", "git", uri}).Stdout(ctx)
+	args := []string{"trufflehog", "--json", "git", uri}
+	if sinceCommit != "" {
+		args = append(args, "--since-commit", sinceCommit)
+	}
+	if branch != "" {
+		args = append(args, "--branch", branch)
+	}
+	return m.base().WithExec(args).Stdout(ctx)
 }
