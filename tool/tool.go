@@ -10,6 +10,7 @@ import (
 	"dagger.io/dagger"
 	"dagger.io/dagger/querybuilder"
 	"github.com/Khan/genqlient/graphql"
+	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/openai/openai-go"
 )
 
@@ -160,6 +161,97 @@ func (t *Tool) InitFromEnv() error {
 	}
 
 	return nil
+}
+
+func (t *Tool) ToMCP() mcp.Tool {
+	opts := []mcp.ToolOption{
+		mcp.WithDescription(t.Description()),
+	}
+	for _, arg := range t.fn.Args {
+		props := []mcp.PropertyOption{
+			mcp.Description(arg.Description),
+		}
+
+		if !arg.TypeDef.Optional {
+			props = append(props, mcp.Required())
+		}
+
+		switch arg.TypeDef.Kind {
+		case dagger.TypeDefKindStringKind:
+			opts = append(opts, mcp.WithString(arg.Name, props...))
+		case dagger.TypeDefKindIntegerKind:
+			opts = append(opts, mcp.WithNumber(arg.Name, props...))
+		case dagger.TypeDefKindBooleanKind:
+			opts = append(opts, mcp.WithBoolean(arg.Name, props...))
+		// case dagger.TypeDefKindVoidKind:
+		// 	props["type"] = "null"
+		// case dagger.TypeDefKindScalarKind:
+		// 	return t.AsScalar.Name
+		// case dagger.TypeDefKindEnumKind:
+		// 	return t.AsEnum.Name
+		// case dagger.TypeDefKindInputKind:
+		// 	return t.AsInput.Name
+		// case dagger.TypeDefKindObjectKind:
+		// 	return t.AsObject.Name
+		// case dagger.TypeDefKindInterfaceKind:
+		// 	return t.AsInterface.Name
+		case dagger.TypeDefKindListKind:
+			// props["type"] = "array"
+			// props["items"] = map[string]string{
+			// 	"type": arg.TypeDef.AsList.ElementTypeDef.String(),
+			// }
+		default:
+			panic(fmt.Sprintf("unsupported type: %s", arg.TypeDef.Kind))
+		}
+	}
+
+	tool := mcp.NewTool(t.Name(), opts...)
+
+	return tool
+}
+
+func (t *Tool) MCPHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	q := querybuilder.Query().Client(t.dag.GraphQLClient())
+
+	// Select module
+	q = q.Select(t.mod.Name)
+	// Bind top-level args
+	for k, v := range t.args {
+		q = q.Arg(k, v)
+	}
+
+	// Select function
+	q = q.Select(t.fn.Name)
+	// Extract the location from the function call arguments
+	for arg, v := range request.Params.Arguments {
+		q = q.Arg(arg, v)
+	}
+
+	gql, err := q.Build(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build query: %w", err)
+	}
+
+	fmt.Fprintf(os.Stderr, "sending query: %s\n", gql)
+
+	var response graphql.Response
+
+	err = t.dag.GraphQLClient().MakeRequest(ctx,
+		&graphql.Request{
+			Query: gql,
+		},
+		&response,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	data, err := json.Marshal(response.Data)
+	if err != nil {
+		return nil, err
+	}
+
+	return mcp.NewToolResultText(string(data)), err
 }
 
 func (t *Tool) Call(ctx context.Context, arguments string) (string, error) {
